@@ -1,1 +1,60 @@
+name: 构建可执行文件
 
+on:
+  # 可以手动触发工作流
+  workflow_dispatch:
+  # 也可以在发布新版本时自动触发
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    steps:
+    # 检出代码
+    - name: 检出仓库
+      uses: actions/checkout@v3
+
+    # 设置Python环境
+    - name: 设置Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    # 安装依赖
+    - name: 安装依赖
+      shell: bash
+      run: |
+        # 升级pip
+        python -m pip install --upgrade pip
+        # 使用pip安装项目依赖和pyinstaller
+        pip install -e .
+        pip install pyinstaller
+
+    # 使用PyInstaller构建
+    - name: 使用PyInstaller构建
+      run: |
+        # 替换main.py为您的主程序文件
+        pyinstaller --onefile --name sudan-cards-${{ matrix.os }} trace.py
+
+    # 上传构建产物
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v3
+      with:
+        name: sudan-cards-${{ matrix.os }}
+        path: dist/
+
+    # 如果是发布触发的，则将构建产物添加到发布中
+    - name: 将构建产物添加到发布中
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
