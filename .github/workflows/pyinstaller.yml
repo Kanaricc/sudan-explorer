@@ -2,7 +2,7 @@ name: 构建可执行文件
 
 on:
   # 可以手动触发工作流
-  workflow_dispatch:
+  workflow_dispatch: {}
   # 也可以在发布新版本时自动触发
   release:
     types: [created]
