@@ -1,6 +1,7 @@
 import argparse
 from dataclasses import dataclass
 import os
+import sys
 from pathlib import Path
 from typing import Any, List, Literal, Set
 import commentjson
@@ -17,7 +18,9 @@ class NodeId:
         return hash((self.typ,self.id))
 
 def get_path(id:NodeId):
-    return f"config/{id.typ}/{id.id}.json"
+    # 使用应用程序运行目录作为基准，而不是 PyInstaller 的临时目录
+    base_dir = Path(os.path.abspath(os.path.dirname(os.path.abspath(sys.argv[0]))))
+    return str(base_dir / f"config/{id.typ}/{id.id}.json")
 
 def read_json(id:NodeId):
     with open(get_path(id),"r") as f:
