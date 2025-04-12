@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>苏丹卡牌关系图</title>
+    <title>苏丹剧情关系图</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body {
@@ -127,6 +127,68 @@
             z-index: 10;
             font-size: 14px;
         }
+        
+        /* 节点详情弹出框样式 */
+        .node-details-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            padding: 20px;
+            z-index: 1000;
+            max-width: 400px;
+            width: 100%;
+        }
+        
+        .node-details-header {
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .node-details-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .node-details-type {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        .node-details-description {
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+        
+        .node-details-actions {
+            display: flex;
+            justify-content: flex-end;
+        }
+        
+        .node-details-button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+        
+        .node-details-button:hover {
+            background-color: #45a049;
+        }
+        
+        .node-details-close {
+            background-color: #f44336;
+        }
     </style>
 </head>
 <body>
@@ -135,6 +197,19 @@
         <div id="search-container">
             <input type="text" id="search-box" placeholder="搜索节点..." />
             <div id="search-results"></div>
+        </div>
+    </div>
+    
+    <!-- 节点详情弹出框 -->
+    <div id="node-details-popup" class="node-details-popup" style="display: none;">
+        <div class="node-details-header">
+            <div class="node-details-title" id="node-details-title"></div>
+            <div class="node-details-type" id="node-details-type"></div>
+        </div>
+        <div class="node-details-description" id="node-details-description"></div>
+        <div class="node-details-actions">
+            <button class="node-details-button node-details-close" id="node-details-close">关闭</button>
+            <button class="node-details-button" id="node-details-open-config">打开配置文件</button>
         </div>
     </div>
 
@@ -259,14 +334,16 @@
                 .attr("fill", d => colorScale(d.typ))
                 .attr("data-id", d => d.id) // 添加数据属性以便于搜索结果定位节点
                 .on("mouseover", function(event, d) {
+                    // 显示工具提示
                     tooltip.transition()
                         .duration(200)
                         .style("opacity", .9);
-                    tooltip.html(`<strong>${d.readable_id}</strong><br/>${d.description || "无描述"}`)
+                    tooltip.html(`<strong>${d.readable_id || d.id}</strong><br/>${d.description || "无描述"}`)
                         .style("left", (event.pageX + 10) + "px")
                         .style("top", (event.pageY - 28) + "px");
                 })
                 .on("mouseout", function() {
+                    // 隐藏工具提示
                     tooltip.transition()
                         .duration(500)
                         .style("opacity", 0);
@@ -274,6 +351,8 @@
                 .on("click", function(event, d) {
                     // 高亮显示选中节点及其所有相连的节点和边
                     highlightConnectedNodes(d.id);
+                    // 显示节点详情弹出框
+                    showNodeDetails(d);
                     event.stopPropagation(); // 阻止事件冒泡
                 });
 
@@ -362,9 +441,7 @@
             }
             
             // 添加点击空白区域取消高亮的功能
-            svg.on("click", function() {
-                resetHighlight();
-            });
+            // 注意：这个事件处理已经在上面重新定义，包含了关闭弹出框的功能
             
             // 存储所有节点的原始位置
             let originalPositions = null;
@@ -609,6 +686,66 @@
                 currentHighlightedNodeIds = null;
             }
 
+            // 显示节点详情弹出框
+            function showNodeDetails(node) {
+                const popup = document.getElementById('node-details-popup');
+                const title = document.getElementById('node-details-title');
+                const type = document.getElementById('node-details-type');
+                const description = document.getElementById('node-details-description');
+                const openConfigBtn = document.getElementById('node-details-open-config');
+                
+                // 设置弹出框内容
+                title.textContent = node.readable_id || node.id;
+                type.textContent = `类型: ${node.typ}`;
+                description.textContent = node.description || "无描述";
+                
+                // 存储当前节点信息到打开配置按钮
+                openConfigBtn.setAttribute('data-node-id', node.id);
+                openConfigBtn.setAttribute('data-node-type', node.typ);
+                
+                // 显示弹出框
+                popup.style.display = 'block';
+            }
+            
+            // 关闭节点详情弹出框
+            document.getElementById('node-details-close').addEventListener('click', function() {
+                document.getElementById('node-details-popup').style.display = 'none';
+            });
+            
+            // 打开配置文件
+            document.getElementById('node-details-open-config').addEventListener('click', function() {
+                const nodeId = this.getAttribute('data-node-id');
+                const nodeType = this.getAttribute('data-node-type');
+                
+                // 调用后端API打开配置文件
+                fetch('/open-config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        type: nodeType,
+                        id: nodeId
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.success) {
+                        alert(`错误: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('打开配置文件出错:', error);
+                    alert(`打开配置文件时出错: ${error.message}`);
+                });
+            });
+            
+            // 点击图形区域空白处关闭弹出框
+            svg.on("click", function() {
+                resetHighlight();
+                document.getElementById('node-details-popup').style.display = 'none';
+            });
+            
             // 设置搜索功能
             function setupSearch(nodes) {
                 const searchBox = document.getElementById('search-box');
@@ -643,9 +780,11 @@
                             <div class="search-item-type">类型: ${node.typ}</div>
                         `;
                         
-                        // 点击搜索结果项时高亮节点
+                        // 点击搜索结果项时高亮节点并显示详情
                         item.addEventListener('click', () => {
                             highlightConnectedNodes(node.id);
+                            // 显示节点详情弹出框
+                            showNodeDetails(node);
                             // 注意：不需要在这里手动居中节点，因为 highlightConnectedNodes 函数会在模拟结束后自动居中高亮节点
                         });
                         
