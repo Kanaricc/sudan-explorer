@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>苏丹卡牌关系图</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+            display: flex;
+            flex-direction: row;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #main-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+        #graph-container {
+            flex: 1;
+            height: 100vh;
+            background-color: white;
+            overflow: hidden;
+        }
+        #search-container {
+            width: 300px;
+            height: 100vh;
+            background-color: #f0f0f0;
+            border-left: 1px solid #ccc;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #search-box {
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        #search-results {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: white;
+        }
+        .search-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+        .search-item:hover {
+            background-color: #f5f5f5;
+        }
+        .search-item-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .search-item-desc {
+            font-size: 12px;
+            color: #666;
+        }
+        .search-item-type {
+            font-size: 11px;
+            color: #999;
+            margin-top: 5px;
+        }
+        .node {
+            cursor: pointer;
+        }
+        .node circle {
+            stroke: #fff;
+            stroke-width: 2px;
+            /* 移除过渡效果，可能导致大量节点时的性能问题 */
+            /* transition: all 0.3s ease; */
+        }
+        .node text {
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
+            /* 移除过渡效果，可能导致大量边时的性能问题 */
+            /* transition: all 0.3s ease; */
+        }
+        
+        .node.highlighted circle {
+            stroke: #ff0000;
+            stroke-width: 3px;
+            r: 18;
+        }
+        
+        .node.faded circle {
+            opacity: 0.3;
+        }
+        
+        .node.faded text {
+            opacity: 0.3;
+        }
+        
+        .link.highlighted {
+            stroke: #ff0000;
+            stroke-width: 2.5px;
+            stroke-opacity: 1;
+        }
+        
+        .link.faded {
+            opacity: 0.1;
+        }
+        .tooltip {
+            position: absolute;
+            padding: 10px;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 5px;
+            pointer-events: none;
+            max-width: 300px;
+            z-index: 10;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="main-container">
+        <div id="graph-container"></div>
+        <div id="search-container">
+            <input type="text" id="search-box" placeholder="搜索节点..." />
+            <div id="search-results"></div>
+        </div>
+    </div>
+
+    <script>
+        // 设置图形的尺寸和边距
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        // 创建SVG容器
+        const svg = d3.select("#graph-container")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+        // 添加缩放功能
+        const g = svg.append("g");
+        const zoom = d3.zoom()
+            .extent([[0, 0], [width, height]])
+            .scaleExtent([0.1, 8])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+        svg.call(zoom);
+
+        // 创建工具提示
+        const tooltip = d3.select("body")
+            .append("div")
+            .attr("class", "tooltip")
+            .style("opacity", 0);
+
+        // 加载数据
+        d3.json("/graph.json").then(data => {
+            // 处理数据，创建节点和边的数据结构
+            const nodes = new Map();
+            const links = [];
+
+            // 首先收集所有节点
+            data.forEach(edge => {
+                const source = edge[0];
+                const target = edge[1];
+
+                if (!nodes.has(source.id)) {
+                    nodes.set(source.id, {
+                        id: source.id,
+                        readable_id: source.readable_id,
+                        description: source.description,
+                        typ: source.typ
+                    });
+                }
+
+                if (!nodes.has(target.id)) {
+                    nodes.set(target.id, {
+                        id: target.id,
+                        readable_id: target.readable_id,
+                        description: target.description,
+                        typ: target.typ
+                    });
+                }
+
+                // 添加边
+                links.push({
+                    source: source.id,
+                    target: target.id
+                });
+            });
+
+            // 转换为数组
+            const nodesArray = Array.from(nodes.values());
+            
+            // 设置搜索功能
+            setupSearch(nodesArray);
+
+            // 创建力导向图
+            const simulation = d3.forceSimulation(nodesArray)
+                .force("link", d3.forceLink(links).id(d => d.id).distance(150))
+                .force("charge", d3.forceManyBody().strength(-300))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collide", d3.forceCollide().radius(60));
+
+            // 绘制边
+            const link = g.append("g")
+                .attr("class", "links")
+                .selectAll("line")
+                .data(links)
+                .enter()
+                .append("line")
+                .attr("class", "link")
+                .attr("marker-end", "url(#arrowhead)");
+
+            // 添加箭头标记
+            svg.append("defs").append("marker")
+                .attr("id", "arrowhead")
+                .attr("viewBox", "0 -5 10 10")
+                .attr("refX", 25) // 调整箭头位置
+                .attr("refY", 0)
+                .attr("orient", "auto")
+                .attr("markerWidth", 6)
+                .attr("markerHeight", 6)
+                .append("path")
+                .attr("d", "M0,-5L10,0L0,5")
+                .attr("fill", "#999");
+
+            // 创建节点组
+            const node = g.append("g")
+                .attr("class", "nodes")
+                .selectAll(".node")
+                .data(nodesArray)
+                .enter()
+                .append("g")
+                .attr("class", "node")
+                .call(d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended));
+
+            // 为不同类型的节点添加不同颜色
+            const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+
+            // 添加圆形
+            node.append("circle")
+                .attr("r", 15)
+                .attr("fill", d => colorScale(d.typ))
+                .attr("data-id", d => d.id) // 添加数据属性以便于搜索结果定位节点
+                .on("mouseover", function(event, d) {
+                    tooltip.transition()
+                        .duration(200)
+                        .style("opacity", .9);
+                    tooltip.html(`<strong>${d.readable_id}</strong><br/>${d.description || "无描述"}`)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function() {
+                    tooltip.transition()
+                        .duration(500)
+                        .style("opacity", 0);
+                })
+                .on("click", function(event, d) {
+                    // 高亮显示选中节点及其所有相连的节点和边
+                    highlightConnectedNodes(d.id);
+                    event.stopPropagation(); // 阻止事件冒泡
+                });
+
+            // 添加文本标签
+            node.append("text")
+                .attr("dy", 30)
+                .attr("text-anchor", "middle")
+                .text(d => d.readable_id)
+                .attr("font-size", "10px")
+                .each(function(d) {
+                    // 截断过长的文本
+                    const text = d3.select(this);
+                    const words = d.readable_id.split('-');
+                    if (words.length > 1) {
+                        text.text(words[0] + '...');
+                    }
+                });
+
+            // 添加图例
+            const legend = svg.append("g")
+                .attr("class", "legend")
+                .attr("transform", "translate(20, 20)");
+
+            // 获取所有唯一的类型
+            const types = [...new Set(nodesArray.map(d => d.typ))];
+
+            types.forEach((type, i) => {
+                const legendRow = legend.append("g")
+                    .attr("transform", `translate(0, ${i * 25})`);
+                
+                legendRow.append("circle")
+                    .attr("r", 7)
+                    .attr("fill", colorScale(type));
+                
+                legendRow.append("text")
+                    .attr("x", 15)
+                    .attr("y", 4)
+                    .text(type);
+            });
+
+            // 更新力导向图
+            let tickCounter = 0;
+            const maxTicks = 300; // 最大迭代次数
+            let alphaMin = 0.001; // 最小能量阈值，当小于这个值时认为稳定
+            
+            simulation.on("tick", () => {
+                tickCounter++;
+                
+                // 更新节点和边的位置
+                link
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+
+                node
+                    .attr("transform", d => `translate(${d.x}, ${d.y})`);
+                
+                // 如果达到最大迭代次数或者能量值已经足够小，停止模拟
+                if (tickCounter >= maxTicks || simulation.alpha() < alphaMin) {
+                    simulation.stop();
+                    console.log("力导向图已稳定，停止更新位置");
+                }
+            });
+
+            // 拖拽函数
+            function dragstarted(event, d) {
+                // // 当力导向图已经停止时，只重启小范围的模拟
+                // if (!event.active) {
+                //     // 使用较小的 alphaTarget 值来减少计算量
+                //     simulation.alphaTarget(0.1).restart();
+                // }
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                // if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+            
+            // 添加点击空白区域取消高亮的功能
+            svg.on("click", function() {
+                resetHighlight();
+            });
+            
+            // 存储所有节点的原始位置
+            let originalPositions = null;
+            let isHighlighted = false;
+            let currentHighlightedNodeIds = null;
+            let highlightSimulation = null;
+            
+            // 高亮显示选中节点及其所有相连的节点和边的函数
+            function highlightConnectedNodes(nodeId) {
+                // 如果已经在高亮状态，判断是否是同一节点
+                if (isHighlighted) {
+                    // 如果是同一节点，不重新触发模拟
+                    if (currentHighlightedNodeIds && currentHighlightedNodeIds.has(nodeId)) {
+                        console.log("已经高亮该节点，不重新模拟");
+                        return;
+                    }
+                    // 如果是不同节点，先重置当前高亮
+                    resetHighlight();
+                }
+                
+                // 停止原模拟
+                simulation.stop();
+                
+                // 创建邻接表数据结构，加速搜索
+                if (!window.adjacencyList) {
+                    window.adjacencyList = {
+                        parents: {}, // 存储每个节点的父节点
+                        children: {} // 存储每个节点的子节点
+                    };
+                    
+                    // 预处理所有边，构建邻接表
+                    links.forEach((link, i) => {
+                        const sourceId = link.source.id;
+                        const targetId = link.target.id;
+                        
+                        // 初始化邻接表条目
+                        if (!adjacencyList.children[sourceId]) adjacencyList.children[sourceId] = [];
+                        if (!adjacencyList.parents[targetId]) adjacencyList.parents[targetId] = [];
+                        
+                        // 添加边和索引信息
+                        adjacencyList.children[sourceId].push({nodeId: targetId, linkIndex: i});
+                        adjacencyList.parents[targetId].push({nodeId: sourceId, linkIndex: i});
+                    });
+                }
+                
+                // 存储所有节点的原始位置（如果还没有存储）
+                if (!originalPositions) {
+                    originalPositions = new Map();
+                    nodesArray.forEach(node => {
+                        originalPositions.set(node.id, {x: node.x, y: node.y});
+                    });
+                }
+                
+                const connectedNodeIds = new Set([nodeId]); // 包含选中节点及其相连节点的集合
+                const connectedLinkIds = new Set();       // 包含相连边的集合
+                
+                // 向父节点方向搜索，只允许向父节点方向搜索
+                function searchParents(startNodeId) {
+                    const parentQueue = [startNodeId];
+                    const parentVisited = new Set([startNodeId]);
+                    
+                    while (parentQueue.length > 0) {
+                        const currentNodeId = parentQueue.shift();
+                        
+                        // 如果当前节点的 id 为 "0"，则不继续扩展该节点
+                        if (currentNodeId === "0") continue;
+                        
+                        // 使用邻接表快速查找父节点
+                        const parents = adjacencyList.parents[currentNodeId] || [];
+                        for (const {nodeId: parentId, linkIndex} of parents) {
+                            connectedLinkIds.add(linkIndex);
+                            
+                            if (!parentVisited.has(parentId)) {
+                                parentVisited.add(parentId);
+                                connectedNodeIds.add(parentId);
+                                parentQueue.push(parentId);
+                            }
+                        }
+                    }
+                }
+                
+                // 向子节点方向搜索，只允许向子节点方向搜索
+                function searchChildren(startNodeId) {
+                    const childQueue = [startNodeId];
+                    const childVisited = new Set([startNodeId]);
+                    
+                    while (childQueue.length > 0) {
+                        const currentNodeId = childQueue.shift();
+                        
+                        // 如果当前节点的 id 为 "0"，则不继续扩展该节点
+                        if (currentNodeId === "0") continue;
+                        
+                        // 使用邻接表快速查找子节点
+                        const children = adjacencyList.children[currentNodeId] || [];
+                        for (const {nodeId: childId, linkIndex} of children) {
+                            connectedLinkIds.add(linkIndex);
+                            
+                            if (!childVisited.has(childId)) {
+                                childVisited.add(childId);
+                                connectedNodeIds.add(childId);
+                                childQueue.push(childId);
+                            }
+                        }
+                    }
+                }
+                
+                // 执行搜索
+                searchParents(nodeId);
+                searchChildren(nodeId);
+                
+                // 保存当前高亮的节点ID
+                currentHighlightedNodeIds = connectedNodeIds;
+                isHighlighted = true;
+                
+                // 创建高亮节点的数组
+                const highlightedNodes = nodesArray.filter(node => connectedNodeIds.has(node.id));
+                
+                // 创建高亮边的数组
+                const highlightedLinks = links.filter((link, i) => connectedLinkIds.has(i));
+                
+                // 隐藏所有非高亮节点
+                node.style('display', d => connectedNodeIds.has(d.id) ? 'block' : 'none');
+                
+                // 隐藏所有非高亮边
+                link.style('display', (d, i) => connectedLinkIds.has(i) ? 'block' : 'none');
+                
+                // 创建新的力导向图模拟，只包含高亮节点
+                highlightSimulation = d3.forceSimulation(highlightedNodes)
+                    .force("link", d3.forceLink(highlightedLinks).id(d => d.id).distance(150))
+                    .force("charge", d3.forceManyBody().strength(-300))
+                    .force("center", d3.forceCenter(width / 2, height / 2))
+                    .force("collide", d3.forceCollide().radius(60));
+                
+                // 更新力导向图
+                highlightSimulation.on("tick", () => {
+                    link
+                        .attr("x1", d => d.source.x)
+                        .attr("y1", d => d.source.y)
+                        .attr("x2", d => d.target.x)
+                        .attr("y2", d => d.target.y);
+
+                    node
+                        .attr("transform", d => `translate(${d.x}, ${d.y})`);
+                });
+                
+                // 设置模拟的迭代次数限制
+                let tickCount = 0;
+                const maxTicks = 100;
+                
+                highlightSimulation.on("tick", () => {
+                    tickCount++;
+                    if (tickCount >= maxTicks) {
+                        highlightSimulation.stop();
+                    }
+                    
+                    link
+                        .attr("x1", d => d.source.x)
+                        .attr("y1", d => d.source.y)
+                        .attr("x2", d => d.target.x)
+                        .attr("y2", d => d.target.y);
+
+                    node
+                        .attr("transform", d => `translate(${d.x}, ${d.y})`);
+                });
+                
+                // 启动模拟
+                highlightSimulation.alpha(1).restart();
+                
+                // 模拟完成后将视图中心移动到高亮节点的中心
+                highlightSimulation.on("end", () => {
+                    // 计算高亮节点的中心位置
+                    let centerX = 0, centerY = 0;
+                    let count = 0;
+                    
+                    // 计算所有高亮节点的平均位置
+                    nodesArray.forEach(node => {
+                        if (connectedNodeIds.has(node.id)) {
+                            centerX += node.x || 0;
+                            centerY += node.y || 0;
+                            count++;
+                        }
+                    });
+                    
+                    if (count > 0) {
+                        centerX /= count;
+                        centerY /= count;
+                        
+                        // 获取当前缩放比例
+                        const transform = d3.zoomTransform(svg.node());
+                        const scale = transform.k;
+                        
+                        // 计算新的平移位置，使高亮节点的中心位于视图中心
+                        const x = -centerX * scale + width / 2;
+                        const y = -centerY * scale + height / 2;
+                        
+                        // 平滑过渡到新位置
+                        svg.transition()
+                            .duration(750)
+                            .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(scale));
+                    }
+                });
+            }
+            
+            // 重置所有高亮的函数
+            function resetHighlight() {
+                // 如果没有高亮状态，直接返回
+                if (!isHighlighted) return;
+                
+                // 停止高亮模拟
+                if (highlightSimulation) {
+                    highlightSimulation.stop();
+                    highlightSimulation = null;
+                }
+                
+                // 显示所有节点和边
+                node.style('display', 'block');
+                link.style('display', 'block');
+                
+                // 恢复原始位置
+                if (originalPositions) {
+                    nodesArray.forEach(node => {
+                        const pos = originalPositions.get(node.id);
+                        if (pos) {
+                            node.x = pos.x;
+                            node.y = pos.y;
+                        }
+                    });
+                    
+                    // 更新节点和边的位置
+                    link
+                        .attr("x1", d => d.source.x)
+                        .attr("y1", d => d.source.y)
+                        .attr("x2", d => d.target.x)
+                        .attr("y2", d => d.target.y);
+
+                    node
+                        .attr("transform", d => `translate(${d.x}, ${d.y})`);
+                }
+                
+                // 重置高亮状态
+                isHighlighted = false;
+                currentHighlightedNodeIds = null;
+            }
+
+            // 设置搜索功能
+            function setupSearch(nodes) {
+                const searchBox = document.getElementById('search-box');
+                const searchResults = document.getElementById('search-results');
+                
+                // 搜索函数
+                function performSearch(query) {
+                    // 清空之前的结果
+                    searchResults.innerHTML = '';
+                    
+                    if (!query) return;
+                    
+                    query = query.toLowerCase();
+                    const matchedNodes = nodes.filter(node => {
+                        const readableId = (node.readable_id || '').toLowerCase();
+                        const description = (node.description || '').toLowerCase();
+                        return readableId.includes(query) || description.includes(query);
+                    });
+                    
+                    if (matchedNodes.length === 0) {
+                        searchResults.innerHTML = '<div class="search-item">没有找到匹配的节点</div>';
+                        return;
+                    }
+                    
+                    // 显示搜索结果
+                    matchedNodes.forEach(node => {
+                        const item = document.createElement('div');
+                        item.className = 'search-item';
+                        item.innerHTML = `
+                            <div class="search-item-title">${node.readable_id || '无标题'}</div>
+                            <div class="search-item-desc">${node.description || '无描述'}</div>
+                            <div class="search-item-type">类型: ${node.typ}</div>
+                        `;
+                        
+                        // 点击搜索结果项时高亮节点
+                        item.addEventListener('click', () => {
+                            highlightConnectedNodes(node.id);
+                            // 注意：不需要在这里手动居中节点，因为 highlightConnectedNodes 函数会在模拟结束后自动居中高亮节点
+                        });
+                        
+                        searchResults.appendChild(item);
+                    });
+                }
+                
+                // 监听搜索框输入事件
+                searchBox.addEventListener('input', function() {
+                    performSearch(this.value);
+                });
+                
+                // 监听回车键事件
+                searchBox.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        performSearch(this.value);
+                    }
+                });
+            }
+        }).catch(error => {
+            console.error("加载数据时出错:", error);
+            document.getElementById("graph-container").innerHTML = 
+                `<div style="padding: 20px; color: red;">
+                    <h3>加载数据失败</h3>
+                    <p>无法从 /graph.json 加载数据: ${error.message}</p>
+                    <p>请确保文件存在且格式正确。</p>
+                </div>`;
+        });
+    </script>
+</body>
+</html>
